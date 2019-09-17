@@ -1,23 +1,43 @@
 package main
 
 import (
-	"bytes"
 	"cuiframe/cui"
 	"fmt"
 	"github.com/jroimartin/gocui"
+	"github.com/nsf/termbox-go"
 	"github.com/sirupsen/logrus"
 	"time"
 )
+
+func scrollView(v *gocui.View, dy int) error {
+	if v != nil {
+		v.Autoscroll = false
+		ox, oy := v.Origin()
+		if err := v.SetOrigin(ox, oy+dy); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 func main() {
 	app, err := cui.NewApp()
 	if err != nil {
 		logrus.Fatalln(err)
 	}
+	defer func() {
+		app.UI.Close()
+		termbox.SetCursor(1, 1)
+		_ = termbox.Flush()
+	}()
+
+	app.UI.Mouse = true
+	app.UI.Cursor = true
+	app.UI.ASCII = true
 
 	var (
-		resultsBuffer  = bytes.NewBuffer([]byte{})
-		logFrameBuffer = bytes.NewBuffer([]byte{})
+		resultsBuffer  = logrus.New()
+		logFrameBuffer = logrus.New()
 	)
 
 	// 添加 ProcessBar
@@ -36,9 +56,16 @@ func main() {
 	})
 	logFrame.Init(func(app *cui.App, g *gocui.Gui, v *gocui.View) error {
 		v.Title = "Log View"
+		v.Wrap = true
+		v.Autoscroll = true
+		v.Editable = true
+		logFrameBuffer.SetOutput(v)
+		if _, err := g.SetCurrentView("log"); err != nil {
+			return err
+		}
+
 		return nil
 	})
-	logFrame.OnUpdated(cui.ShowLastBufferLinesWithSizedBuffer(logFrameBuffer, 500))
 	app.AddToLayout(logFrame)
 
 	results := cui.NewAppFrame(app, "results", func(x, y int) (i int, i2 int, i3 int, i4 int) {
@@ -46,9 +73,42 @@ func main() {
 	})
 	results.Init(func(app *cui.App, g *gocui.Gui, v *gocui.View) error {
 		v.Title = "Results"
+		v.Wrap = true
+		v.Editable = true
+		v.Overwrite = true
+		resultsBuffer.SetOutput(v)
+		if _, err := g.SetCurrentView("results"); err != nil {
+			return err
+		}
+
 		return nil
 	})
-	results.OnUpdated(cui.ShowLastBufferLines(resultsBuffer))
+	if err := app.UI.SetKeybinding("results", gocui.KeyArrowUp, gocui.ModNone,
+		func(gui *gocui.Gui, view *gocui.View) error {
+			if err := scrollView(view, -1); err != nil {
+				return fmt.Errorf("set results scroller up failed: %s", err)
+			}
+			return nil
+		}); err != nil {
+		return
+	}
+	if err := app.UI.SetKeybinding("results", gocui.KeyArrowDown, gocui.ModNone,
+		func(gui *gocui.Gui, view *gocui.View) error {
+			if err := scrollView(view, 1); err != nil {
+				return fmt.Errorf("set results scroller down failed: %s", err)
+			}
+			return nil
+		}); err != nil {
+		return
+	}
+	app.UI.SetKeybinding("results", gocui.MouseWheelDown, gocui.ModNone,
+		func(gui *gocui.Gui, view *gocui.View) error {
+			return scrollView(view, 1)
+		})
+	app.UI.SetKeybinding("results", gocui.MouseWheelUp, gocui.ModNone,
+		func(gui *gocui.Gui, view *gocui.View) error {
+			return scrollView(view, -1)
+		})
 	app.AddToLayout(results)
 
 	// 每 0.5 秒写一次 Log
@@ -57,8 +117,8 @@ func main() {
 		for {
 			select {
 			case <-ticker:
-				resultsBuffer.WriteString(fmt.Sprintf("strinasdfasdfasdf %s full: %v \r\n", time.Now().String(), len(resultsBuffer.String())))
-				logFrameBuffer.WriteString(fmt.Sprintf("logger is sized to 200 now: %s now: %v\n", time.Now().String(), len(logFrameBuffer.String())))
+				resultsBuffer.Info(fmt.Sprintf("strinasdfasdfasdf %s full: %v \r\n", time.Now().String()))
+				logFrameBuffer.Info(fmt.Sprintf("logger is sized to 200 now: %s now: %v\n", time.Now().String()))
 			}
 		}
 	}()
